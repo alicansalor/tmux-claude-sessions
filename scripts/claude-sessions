@@ -1,0 +1,71 @@
+#!/usr/bin/env bash
+# claude-sessions: tmux popup launcher to browse and resume Claude Code sessions.
+#
+# Run inside a tmux display-popup. Lists sessions for the current project
+# (Tab toggles all projects), shows a live transcript preview, and on Enter
+# resumes the chosen session in the pane that launched the popup.
+#
+# Usage: claude-sessions [--in-place] <parent-pane-id>
+#
+#   default    send-keys "claude --resume <id>" into the pane (pane must be at
+#              a shell prompt). Used by the prefix+C-j keybinding.
+#   --in-place respawn the pane with the resumed session, replacing whatever is
+#              running there (e.g. an open Claude session). Used by /tmux-resume.
+set -euo pipefail
+
+IN_PLACE=0
+if [ "${1:-}" = "--in-place" ]; then
+  IN_PLACE=1
+  shift
+fi
+
+# Resolve the launching pane. Passing #{pane_id} through `display-popup -E`
+# expands empty (popup context), so fall back to asking tmux directly: from
+# inside the popup, display-message still reports the underlying active pane.
+PANE_ID="${1:-}"
+if [ -z "$PANE_ID" ]; then
+  PANE_ID="$(tmux display-message -p '#{pane_id}' 2>/dev/null || true)"
+fi
+HELPER="$(dirname "$0")/claude-sessions-helper.py"
+
+# Shared mode state (current vs all projects), read/written by the helper.
+CS_STATE="$(mktemp -t claude-sessions.XXXXXX)"
+echo current >"$CS_STATE"
+export CS_STATE
+trap 'rm -f "$CS_STATE"' EXIT
+
+session_id="$(
+  python3 "$HELPER" list | fzf \
+    --ansi \
+    --read0 \
+    --layout=reverse \
+    --gap=1 \
+    --wrap=word \
+    --wrap-sign='    ' \
+    --highlight-line \
+    --delimiter='\t' \
+    --with-nth=2.. \
+    --accept-nth=1 \
+    --no-multi \
+    --prompt='claude sessions > ' \
+    --header='enter: resume in pane   tab: toggle current/all projects   esc: cancel' \
+    --preview="python3 '$HELPER' preview {1}" \
+    --preview-window='right,55%,wrap' \
+    --bind="tab:reload(python3 '$HELPER' list --toggle)" \
+    || true
+)"
+
+[ -z "$session_id" ] && exit 0
+
+if [ "$IN_PLACE" = "1" ] && [ -n "$PANE_ID" ]; then
+  # Replace whatever runs in the launching pane (an open Claude session) with
+  # the resumed one. Fired as a detached, server-side job so it survives
+  # killing its own parent process (this popup / the Claude we're replacing).
+  # session ids are plain UUIDs, so no extra quoting is needed.
+  tmux run-shell -b "tmux respawn-pane -k -t '$PANE_ID' 'claude --resume $session_id'"
+elif [ -n "$PANE_ID" ]; then
+  tmux send-keys -t "$PANE_ID" "claude --resume $session_id" Enter
+else
+  # Fallback when launched outside the keybinding: resume here.
+  exec claude --resume "$session_id"
+fi
