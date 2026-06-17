@@ -5,6 +5,9 @@ tmux popup — a fuzzy picker with rich, scrollable previews and Claude's own
 "Goal / Done / Next" recaps, all read straight off disk so opening the picker
 costs **zero model tokens**.
 
+https://github.com/user-attachments/assets/d878db76-44e2-4636-b991-e8e9add01f72
+
+
 ```
  claude sessions >
 ▌ Explore tmux plugins for Claude session searching        13:57
